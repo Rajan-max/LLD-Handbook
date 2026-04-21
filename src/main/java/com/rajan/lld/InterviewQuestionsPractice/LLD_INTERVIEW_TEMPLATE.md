@@ -1,676 +1,485 @@
-# LLD Interview Problem Template 🎯
+# LLD Interview Delivery Framework 🎯
 
-> **Purpose**: A systematic approach to solving Low-Level Design interview problems with emphasis on concurrency, scalability, and clean architecture.
-
----
-
-## 📋 TEMPLATE OVERVIEW
-
-This template guides you through solving any LLD problem systematically. Follow these steps in order during interviews.
-
-### ⏱️ Time Allocation Guide
-
-| Interview Length | Step Focus | Time Distribution |
-|-----------------|------------|-------------------|
-| **45 min** | Steps 1-5 (80%), Step 6 (20%) | Requirements → Design → Core Implementation |
-| **60 min** | Steps 1-6 (70%), Step 7-8 (30%) | Add Concurrency + Testing Strategy |
-| **90 min** | All Steps | Complete implementation with trade-offs |
+> A practical, time-boxed framework for delivering low-level design interviews in ~35-45 minutes of active design time within a 60-minute interview.
 
 ---
 
-## 🎯 STEP 1: REQUIREMENTS GATHERING (5-10 min)
+## ⏱️ Time Budget
 
-> **🧠 MINDSET**: "Understand the problem deeply before writing any code"
+| Phase | Time | What You're Doing |
+|-------|------|-------------------|
+| **1. Requirements** | ~5 min | Clarify the prompt, write a spec |
+| **2. Entities & Relationships** | ~3 min | Identify core objects and ownership |
+| **3. Class Design** | ~10 min | State + behavior for each class |
+| **4. Concurrency** | ~5 min | Only if the problem demands it |
+| **5. Implementation** | ~10 min | Core methods + walkthrough |
+| **6. Testing** | ~3 min | Key scenarios to verify |
+| **7. Extensibility** | ~5 min | Interviewer-led follow-ups |
 
-### 📝 Questions to Ask
+If the interviewer pulls you in a different direction, follow their lead. But gently guide back to ensure you cover the important parts.
 
-#### **Functional Requirements**
+---
+
+## 1) Requirements (~5 min)
+
+The prompt is intentionally vague. Your job is to turn it into a spec you can design around.
+
+### Clarifying Question Themes
+
+Work through these four themes to quickly uncover the full expected behavior:
+
+- **Primary capabilities** — What operations must this system support?
+- **Rules and completion** — What conditions define success, failure, or state transitions?
+- **Error handling** — How should the system respond to invalid inputs or actions?
+- **Scope boundaries** — What's in scope (core logic, business rules) and what's explicitly out (UI, storage, networking)?
+
+### Output Format
+
+Write this on the whiteboard. Confirm with your interviewer before moving on.
+
+**Example — Hotel Booking System:**
+
 ```
-✅ What are the core features? (Must-have vs Nice-to-have)
-✅ Who are the users/actors in the system?
-✅ What are the main workflows/use cases?
-✅ What are the business rules and constraints?
-✅ What are the edge cases to handle?
+Requirements:
+1. Support room types (SINGLE, DOUBLE, SUITE) with different pricing
+2. Search available rooms by type and date range
+3. Reserve a room for a date range (two-step: lock → confirm)
+4. Calculate total based on nights × room rate
+5. Cancel bookings and release dates
+6. Prevent double-booking under concurrent access
+
+Out of Scope:
+- Payment gateway integration
+- Check-in/check-out workflow
+- Multi-hotel management
+- Dynamic pricing / cancellation policies
+- Guest loyalty programs
 ```
 
-#### **Non-Functional Requirements**
+**Example — Parking Lot System:**
+
 ```
-✅ Scale: How many users/requests/entities?
-✅ Performance: Response time expectations?
-✅ Concurrency: Multiple users accessing simultaneously?
-✅ Persistence: In-memory or database?
-✅ Availability: Uptime requirements?
+Requirements:
+1. Multiple floors, each with slots of different types (BIKE, CAR, TRUCK)
+2. Park vehicle in first available matching slot, issue ticket
+3. Calculate fee based on duration and vehicle type (hourly pricing)
+4. Free slot on exit
+5. No double-parking under concurrent access
+
+Out of Scope:
+- Reservation system
+- Valet parking / EV charging
+- Payment gateway
+- User authentication
 ```
 
-#### **Clarifications**
+### Why This Matters
+
+Without clear requirements, you'll either build the wrong thing or waste time on features the interviewer doesn't care about. A 2-minute clarification saves 10 minutes of rework.
+
+---
+
+## 2) Entities & Relationships (~3 min)
+
+Scan your requirements and pull out the meaningful nouns. These are the "things" that need to exist in your system.
+
+### Simple Filter
+
+- If it **maintains changing state** or **enforces rules** → it's an entity (its own class)
+- If it's just **information attached to something else** → it's a field on another class
+
+### What to Capture
+
+For each entity, think about:
+- Which entity is the **orchestrator** — the one driving the main workflow?
+- Which entities **own durable state**?
+- How do they **depend on each other**? (has-a, uses, contains)
+
+### Output Format
+
+Don't overthink notation. Simple boxes, arrows, and labels on the whiteboard.
+
+**Example — Hotel Booking System:**
+
 ```
-✅ What can I assume vs what must I implement?
-✅ Are there any specific constraints (memory, latency)?
-✅ Should I focus on extensibility or simplicity?
+Entities:
+- Room          (bookable resource, owns date-based schedule)
+- Guest         (person making the booking)
+- Booking       (links guest + room + dates, tracks status)
+- RoomManager   (resource registry + locks)
+- BookingManager (orchestrator — search, lock, confirm, cancel)
+
+Relationships:
+- BookingManager → RoomManager (uses for room lookup + locks)
+- BookingManager → BookingRepository (persists bookings)
+- Booking → Guest, Room (references)
+- Room grouped by RoomType
 ```
 
-### 📋 Requirements Documentation Template
+**Example — Parking Lot System:**
 
-```markdown
-## [SYSTEM NAME] Requirements
+```
+Entities:
+- ParkingSlot   (individual space, owns occupied state)
+- Floor         (contains slots + per-slot locks)
+- ParkingLot    (contains floors)
+- Vehicle       (Bike, Car, Truck — what's being parked)
+- Ticket        (links slot + vehicle + entry time)
+- ParkingManager (orchestrator — park, exit, fee calculation)
 
-### Functional Requirements
-1. **FR1**: [Description]
-2. **FR2**: [Description]
-...
+Relationships:
+- ParkingLot → Floor (1:N)
+- Floor → ParkingSlot (1:N) + per-slot locks
+- Ticket → ParkingSlot, Vehicle
+- ParkingManager → ParkingLot, TicketRepository, PricingStrategy
+```
 
-### Non-Functional Requirements
-1. **NFR1**: Concurrency - [X] concurrent users
-2. **NFR2**: Performance - [Y]ms response time
-3. **NFR3**: Scale - [Z] entities
-...
+This is all your interviewer needs to follow your thinking. From here, you turn these into well-defined classes.
 
-### Assumptions
-1. [Assumption 1]
-2. [Assumption 2]
-...
+---
 
-### Out of Scope
-1. [What we won't implement]
-2. [Future enhancements]
+## 3) Class Design (~10 min)
+
+Go entity by entity, top-down. Start with the orchestrator, then supporting entities.
+
+For each class, answer two questions:
+- **State** — What does this class need to remember?
+- **Behavior** — What does this class need to do?
+
+### Deriving State from Requirements
+
+Go back to your requirements and ask: *Which requirements does this entity own? What must it track?*
+
+**Example — Hotel Booking System:**
+
+| Requirement | What BookingManager must track |
+|---|---|
+| "Search rooms by type and dates" | RoomManager (room registry) |
+| "Reserve room (lock → confirm)" | BookingRepository (persists bookings) |
+| "Prevent double-booking" | Room-level locks via RoomManager |
+
+| Requirement | What Room must track |
+|---|---|
+| "Date-based availability" | bookingSchedule: Map<LocalDate, String> |
+| "Room type and pricing" | type: RoomType |
+
+### Deriving Behavior from Requirements
+
+Ask: *What operations does the outside world need from this class?*
+
+**Example — Hotel Booking System:**
+
+| Need from requirements | Method |
+|---|---|
+| Search and reserve a room | SearchAndLockRoom(guest, type, checkIn, checkOut) → Booking |
+| Confirm after payment | confirmBooking(bookingId) → Booking |
+| Cancel and release dates | cancelBooking(bookingId) |
+
+### Output Format
+
+Write the class outlines on the whiteboard. Don't worry about syntax — communicate structure.
+
+```
+class Room:
+  - id: String
+  - type: RoomType
+  - bookingSchedule: Map<LocalDate, String>
+
+  + isAvailable(checkIn, checkOut) → bool       // Caller MUST hold lock
+  + reserve(checkIn, checkOut, bookingId)        // Caller MUST hold lock
+  + release(checkIn, checkOut)                   // Caller MUST hold lock
+
+class RoomManager:
+  - roomsByType: Map<RoomType, List<Room>>
+  - roomLocks: Map<String, ReentrantLock>
+
+  + addRoom(room)
+  + getRoomByType(type) → List<Room>
+  + getRoomLock(roomId) → ReentrantLock
+
+class BookingManager:
+  - roomManager: RoomManager
+  - bookingRepository: BookingRepository
+
+  + SearchAndLockRoom(guest, type, checkIn, checkOut) → Booking
+  + confirmBooking(bookingId) → Booking
+  + cancelBooking(bookingId)
+
+class Booking:
+  - id, guest, room, checkIn, checkOut, totalAmount
+  - status: PENDING → CONFIRMED / CANCELLED
+
+class Guest:
+  - id, name (immutable)
+```
+
+### Key Principle
+
+Keep rules with the entity that owns the relevant state:
+- **Workflow rules** (can this operation run now?) → orchestrator (BookingManager)
+- **Data rules** (is this date available?) → entity that owns the data (Room)
+
+---
+
+## 4) Concurrency Control (~5 min)
+
+**Only if the problem involves concurrent access.** Skip entirely for single-threaded problems like Tic Tac Toe.
+
+### Three Questions to Answer
+
+1. **What is shared?** — Which data can multiple threads touch simultaneously?
+2. **What can go wrong?** — What race conditions exist?
+3. **What's the locking strategy?** — At what granularity do you lock?
+
+### Locking Granularity Decision
+
+| Granularity | Throughput | Complexity | When to Use |
+|---|---|---|---|
+| **System-level** | Very low | Simple | Never in interviews (too coarse) |
+| **Resource-level** | High | Moderate | Most problems (room, vehicle, slot) |
+| **Sub-resource** | Very high | Complex | Only if needed (seat-level in movie booking) |
+
+Almost always, **resource-level locking** is the right answer. Each resource (room, vehicle, parking slot) gets its own ReentrantLock.
+
+### Output Format
+
+State this clearly to the interviewer:
+
+```
+Concurrency Strategy: Room-level locking
+
+Shared resources:
+- Room.bookingSchedule — multiple threads booking same room
+
+Race condition prevented:
+- Double-booking: Two threads book same room for overlapping dates
+  → Prevented by acquiring room lock before check + reserve (atomic)
+
+Locking approach:
+- Each room has its own ReentrantLock (fair lock)
+- tryLock with 5s timeout to prevent indefinite blocking
+- Lock ordering not needed (single lock per operation, no deadlock risk)
+
+Thread-safety:
+- Room: volatile + external lock (caller MUST hold lock)
+- Booking: volatile status + immutable fields
+- Repositories: ConcurrentHashMap
+```
+
+### Multi-Resource Locking (Deadlock Prevention)
+
+If a single operation needs to lock multiple resources (e.g., multiple seats in movie booking):
+
+```
+DEADLOCK PREVENTION: Always acquire locks in sorted order
+
+// Sort seat IDs before locking
+List<String> sorted = new ArrayList<>(seatIds);
+Collections.sort(sorted);
+
+// Acquire locks in sorted order
+for (String seatId : sorted) {
+    lock = show.getSeatLock(seatId);
+    lock.tryLock(5, TimeUnit.SECONDS);
+}
 ```
 
 ---
 
-## 🏗️ STEP 2: DOMAIN MODELING (5-10 min)
+## 5) Implementation (~10 min)
 
-> **🧠 MINDSET**: "Identify the core entities and their relationships"
+Implement the core methods that show how your classes cooperate, how state transitions occur, and how edge cases are handled. Ask your interviewer which methods they want to see.
 
-### 🎯 Entity Identification
+### Focus On
 
-**For each entity, document:**
+- **Happy path first** — the normal flow when everything goes right
+- **Edge cases second** — invalid inputs, illegal state transitions, timeouts
+- **The most interesting method** — usually the one with concurrency or complex logic
 
-```markdown
-### Entity: [Name]
-- **Purpose**: What does it represent?
-- **Key Attributes**: Essential data fields
-- **Responsibilities**: What can it do?
-- **Relationships**: How does it relate to other entities?
-- **Lifecycle**: Creation, updates, deletion
-```
-
-### 🔗 Relationship Types
-
-| Type | Symbol | Example |
-|------|--------|---------|
-| **One-to-One** | 1:1 | User ↔ Profile |
-| **One-to-Many** | 1:N | Order → OrderItems |
-| **Many-to-Many** | M:N | Students ↔ Courses |
-| **Composition** | ◆ | Car ◆→ Engine (strong ownership) |
-| **Aggregation** | ◇ | Department ◇→ Employees (weak ownership) |
-
-### 📊 Domain Model Diagram
-
-```
-[Draw or describe entity relationships]
-
-Example:
-User (1) ──has──> (N) Bookings
-Booking (N) ──for──> (1) Resource
-Resource (1) ──belongs to──> (1) Location
-```
-
----
-
-## 🎨 STEP 3: DESIGN PATTERNS & ARCHITECTURE (10-15 min)
-
-> **🧠 MINDSET**: "Choose patterns that solve specific problems, not for the sake of patterns"
-
-### 🏛️ Architecture Layers
-
-```
-┌─────────────────────────────────────┐
-│     API/Controller Layer            │ ← Entry points
-├─────────────────────────────────────┤
-│     Service/Business Logic Layer    │ ← Core logic
-├─────────────────────────────────────┤
-│     Repository/Data Access Layer    │ ← Data operations
-├─────────────────────────────────────┤
-│     Model/Domain Layer              │ ← Entities
-└─────────────────────────────────────┘
-```
-
-### 🎯 Pattern Selection Matrix
-
-| Problem | Pattern | Why Use It |
-|---------|---------|------------|
-| **Object creation complexity** | Factory/Builder | Encapsulate creation logic |
-| **Single instance needed** | Singleton | Shared resource (use carefully!) |
-| **Algorithm variations** | Strategy | Swap algorithms at runtime |
-| **State-dependent behavior** | State | Clean state transitions |
-| **Notify multiple objects** | Observer | Event-driven updates |
-| **Add features dynamically** | Decorator | Flexible enhancement |
-| **Simplify complex subsystem** | Facade | Hide complexity |
-| **Control access** | Proxy | Lazy loading, caching, security |
-
-### 📝 Pattern Documentation Template
-
-```markdown
-### Pattern: [Name]
-- **Problem**: What problem does it solve?
-- **Solution**: How does it solve it?
-- **Implementation**: Where/how used in this system?
-- **Trade-offs**: What are the costs?
-```
-
----
-
-## 🔐 STEP 4: CONCURRENCY CONTROL (CRITICAL!) ⚠️
-
-> **🧠 MINDSET**: "Identify shared resources and protect them from race conditions"
-
-### 🎯 Concurrency Analysis Checklist
-
-```
-✅ What data is shared across threads?
-✅ What operations modify shared state?
-✅ What are the critical sections?
-✅ What are potential race conditions?
-✅ What is the expected concurrency level?
-```
-
-### 🔒 Concurrency Strategies
-
-#### **1. Synchronization Levels**
-
-| Level | Approach | Use When | Example |
-|-------|----------|----------|---------|
-| **Method-level** | `synchronized method` | Simple, coarse-grained | `synchronized void book()` |
-| **Block-level** | `synchronized(lock)` | Fine-grained control | Lock specific section |
-| **Read-Write** | `ReentrantReadWriteLock` | Many reads, few writes | Cache access |
-| **Lock-free** | `AtomicInteger`, `ConcurrentHashMap` | High contention | Counters, maps |
-
-#### **2. Thread-Safe Data Structures**
+### Example — SearchAndLockRoom (Hotel Booking)
 
 ```java
-// Choose based on use case:
-ConcurrentHashMap<K,V>      // Thread-safe map
-CopyOnWriteArrayList<E>     // Read-heavy lists
-BlockingQueue<E>            // Producer-consumer
-AtomicInteger/AtomicLong    // Counters
+public Booking SearchAndLockRoom(Guest guest, RoomType type,
+                                 LocalDate checkIn, LocalDate checkOut) {
+    List<Room> rooms = roomManager.getRoomByType(type);
+
+    for (Room room : rooms) {
+        ReentrantLock lock = roomManager.getRoomLock(room.getId());
+        try {
+            if (lock.tryLock(5, TimeUnit.SECONDS)) {
+                try {
+                    if (room.isAvailable(checkIn, checkOut)) {
+                        Booking booking = new Booking(guest, room, checkIn, checkOut);
+                        room.reserve(checkIn, checkOut, booking.getId());
+                        bookingRepository.save(booking);
+                        return booking;
+                    }
+                } finally {
+                    lock.unlock();
+                }
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted");
+        }
+    }
+    throw new IllegalStateException("No available rooms");
+}
 ```
 
-#### **3. Concurrency Patterns**
+**What this demonstrates:**
+- Atomic check-and-reserve (no gap between availability check and reservation)
+- tryLock with timeout (non-blocking, prevents indefinite wait)
+- Proper lock release in finally block
+- Iterates through all rooms of type (first available wins)
 
-**Pattern 1: Double-Checked Locking (Singleton)**
+### Example — parkVehicle (Parking Lot)
+
 ```java
-private static volatile Instance instance;
+public Ticket parkVehicle(Vehicle vehicle) {
+    for (Floor floor : parkingLot.getFloors()) {
+        for (ParkingSlot slot : floor.getSlots()) {
+            if (slot.getType() != SlotType.valueOf(vehicle.getType().name()))
+                continue;
 
-public static Instance getInstance() {
-    if (instance == null) {
-        synchronized (Instance.class) {
-            if (instance == null) {
-                instance = new Instance();
+            ReentrantLock lock = floor.getLockForSlot(slot.getId());
+            if (lock.tryLock()) {
+                try {
+                    if (slot.canFit(vehicle)) {
+                        slot.park(vehicle);
+                        Ticket ticket = new Ticket(floor.getNumber(), slot, vehicle);
+                        ticketRepository.save(ticket);
+                        return ticket;
+                    }
+                } finally {
+                    lock.unlock();
+                }
             }
         }
     }
-    return instance;
+    throw new RuntimeException("No available slot for " + vehicle.getType());
 }
 ```
 
-**Pattern 2: Read-Write Lock**
-```java
-private final ReadWriteLock lock = new ReentrantReadWriteLock();
+### Verification: Walk Through a Scenario
 
-public Data read() {
-    lock.readLock().lock();
-    try {
-        return data;
-    } finally {
-        lock.readLock().unlock();
-    }
-}
+After implementing, trace through a concrete example (1-2 min):
 
-public void write(Data newData) {
-    lock.writeLock().lock();
-    try {
-        data = newData;
-    } finally {
-        lock.writeLock().unlock();
-    }
-}
+```
+Scenario: Two threads try to book the same DOUBLE room for overlapping dates
+
+Thread A: SearchAndLockRoom(Guest A, DOUBLE, Jan 5-10)
+  → Acquires lock on Room R2
+  → R2.isAvailable(Jan 5-10) = true
+  → R2.reserve(Jan 5-10, "BK-1001")
+  → Returns Booking BK-1001
+  → Releases lock
+
+Thread B: SearchAndLockRoom(Guest B, DOUBLE, Jan 8-12)
+  → Acquires lock on Room R2 (after Thread A releases)
+  → R2.isAvailable(Jan 8-12) = false (Jan 8,9 already reserved)
+  → Moves to next room or throws "No available rooms"
+
+✓ No double-booking. Atomic check + reserve under lock.
 ```
 
-**Pattern 3: Atomic Operations**
-```java
-private AtomicInteger counter = new AtomicInteger(0);
-
-public int incrementAndGet() {
-    return counter.incrementAndGet(); // Thread-safe
-}
-```
-
-### 🚨 Common Concurrency Issues
-
-| Issue | Description | Solution |
-|-------|-------------|----------|
-| **Race Condition** | Multiple threads modify shared data | Synchronization |
-| **Deadlock** | Threads wait for each other | Lock ordering, timeouts |
-| **Starvation** | Thread never gets resources | Fair locks |
-| **Livelock** | Threads keep changing state | Randomized backoff |
-
-### 📝 Concurrency Documentation Template
-
-```markdown
-## Concurrency Strategy
-
-### Shared Resources
-1. **[Resource Name]**
-   - **Access Pattern**: Read-heavy / Write-heavy / Mixed
-   - **Protection**: [Synchronization mechanism]
-   - **Justification**: [Why this approach]
-
-### Critical Sections
-1. **[Operation Name]**
-   - **What**: What is being protected
-   - **Why**: What race condition it prevents
-   - **How**: Synchronization mechanism used
-
-### Thread-Safety Guarantees
-- [List what operations are thread-safe]
-- [List what operations require external synchronization]
-
-### Performance Considerations
-- **Lock Contention**: [How minimized]
-- **Scalability**: [How system scales with threads]
-```
+This catches logical errors before the interviewer finds them.
 
 ---
 
-## 💻 STEP 5: CLASS DESIGN & IMPLEMENTATION (20-30 min)
+## 6) Testing Strategy (~3 min)
 
-> **🧠 MINDSET**: "Write clean, minimal code that solves the problem"
+You won't write full tests in the interview. But briefly describe the key scenarios you'd verify.
 
-### 🎯 Class Structure Template
+### What to Cover
+
+**Functional tests** — Does the happy path work?
+- Book a room, confirm it, verify status
+- Park a vehicle, exit, verify fee calculation
+
+**Concurrency tests** — Does it hold under parallel access?
+- **Single resource contention**: 10 threads, 1 room, same dates → only 1 succeeds
+- **Parallel different resources**: 10 threads, 10 rooms → all 10 succeed
+- **Overlapping conflicts**: 2 threads, overlapping date ranges → 1 fails
+- **Release + re-acquire**: Cancel/return, then another thread books → both succeed
+
+**Edge cases** — Does it fail gracefully?
+- Invalid dates (checkOut before checkIn)
+- Booking not found
+- Double cancellation
+- All resources full
+
+### Example — How to State This
+
+> "I'd write four concurrency tests: single-room contention where only 1 of 10 threads succeeds, parallel booking of different rooms where all succeed, overlapping date conflict where one thread is correctly rejected, and a cancel-then-rebook flow where both operations succeed. These cover the main race conditions."
+
+---
+
+## 7) Extensibility (~5 min, if time allows)
+
+This is usually interviewer-led. They'll propose a twist to see if your design can evolve cleanly.
+
+### How to Answer
+
+Stay high-level. Point to the parts of your design that make the change clean. Don't rewrite code.
+
+### Common Extensions and How to Handle Them
+
+**"How would you add different pricing strategies?"**
+> "I'd extract pricing into a Strategy interface. The manager takes a PricingStrategy in its constructor. To add surge pricing or weekly discounts, I implement a new strategy — no changes to existing code."
 
 ```java
-/**
- * [Class Purpose]
- * 
- * Thread-Safety: [Thread-safe / Not thread-safe / Conditionally thread-safe]
- * Concurrency: [Synchronization strategy if applicable]
- */
-public class ClassName {
-    // 1. CONSTANTS
-    private static final int MAX_CAPACITY = 100;
-    
-    // 2. INSTANCE VARIABLES (with thread-safety annotations)
-    private final Object lock = new Object(); // Explicit lock object
-    private volatile int counter; // Volatile for visibility
-    private final ConcurrentHashMap<K, V> map; // Thread-safe collection
-    
-    // 3. CONSTRUCTOR
-    public ClassName() {
-        // Initialize thread-safe structures
-        this.map = new ConcurrentHashMap<>();
-    }
-    
-    // 4. PUBLIC METHODS (document thread-safety)
-    /**
-     * Thread-safe method using synchronization
-     */
-    public synchronized void synchronizedMethod() {
-        // Implementation
-    }
-    
-    /**
-     * Thread-safe method using explicit lock
-     */
-    public void explicitLockMethod() {
-        synchronized(lock) {
-            // Critical section
-        }
-    }
-    
-    /**
-     * Thread-safe using atomic operations
-     */
-    public void atomicMethod() {
-        // Use atomic operations
-    }
-    
-    // 5. PRIVATE HELPER METHODS
-    private void helperMethod() {
-        // Assume caller holds lock if needed
-    }
-}
-```
-
-### 🎯 SOLID Principles Checklist
-
-```
-✅ Single Responsibility: Each class has one reason to change
-✅ Open/Closed: Open for extension, closed for modification
-✅ Liskov Substitution: Subtypes are substitutable
-✅ Interface Segregation: Small, focused interfaces
-✅ Dependency Inversion: Depend on abstractions
-```
-
-### 🎯 Code Quality Checklist
-
-```
-✅ Meaningful names (no abbreviations)
-✅ Small methods (< 20 lines)
-✅ No magic numbers (use constants)
-✅ Proper error handling
-✅ Thread-safety documented
-✅ Null checks where needed
-✅ Input validation
-```
-
----
-
-## 🧪 STEP 6: TESTING STRATEGY (5-10 min)
-
-> **🧠 MINDSET**: "Think about testing while designing, not after"
-
-### 🎯 Test Categories
-
-#### **1. Unit Tests (70%)**
-```java
-@Test
-public void testHappyPath() {
-    // Given: Setup
-    // When: Execute
-    // Then: Verify
+interface PricingStrategy {
+    double calculateFee(RoomType type, long nights);
 }
 
-@Test
-public void testEdgeCase() {
-    // Test boundaries
-}
-
-@Test
-public void testErrorHandling() {
-    // Test invalid inputs
-}
+class SeasonalPricing implements PricingStrategy { ... }
+class LoyaltyPricing implements PricingStrategy { ... }
 ```
 
-#### **2. Concurrency Tests (20%)**
-```java
-@Test
-public void testConcurrentAccess() throws InterruptedException {
-    ExecutorService executor = Executors.newFixedThreadPool(10);
-    CountDownLatch latch = new CountDownLatch(100);
-    
-    for (int i = 0; i < 100; i++) {
-        executor.submit(() -> {
-            try {
-                // Concurrent operation
-            } finally {
-                latch.countDown();
-            }
-        });
-    }
-    
-    latch.await();
-    // Verify consistency
-}
+**"How would you support multiple hotels/locations?"**
+> "Each hotel would have its own RoomManager. A top-level HotelManager routes requests to the right hotel's RoomManager. The BookingManager and Room classes don't change."
 
-@Test
-public void testNoRaceCondition() {
-    // Verify atomic operations
-}
+**"How would you add a notification system?"**
+> "I'd add an Observer/event mechanism. When a booking is confirmed or cancelled, the BookingManager fires an event. Notification channels (email, SMS, push) subscribe to these events. The core booking logic doesn't change."
+
+**"How would you scale this to millions of rooms?"**
+> "The current design already supports horizontal scaling — rooms are independent, locks are per-room. For distributed systems, I'd replace in-memory locks with Redis distributed locks and ConcurrentHashMap with a database. The class structure stays the same."
+
+### Key Principle
+
+If your initial design is well-structured (clean separation, single responsibility, resource-level locking), most extensions are additive — you add new classes without modifying existing ones. That's the signal the interviewer is looking for.
+
+---
+
+## Quick Reference Card
+
+### Before You Start Coding
+```
+□ Requirements written and confirmed with interviewer
+□ Core entities identified with ownership boundaries
+□ Class outlines with state + behavior
+□ Concurrency strategy stated (if applicable)
 ```
 
-#### **3. Integration Tests (10%)**
-```java
-@Test
-public void testCompleteWorkflow() {
-    // Test end-to-end scenario
-}
+### During Implementation
+```
+□ Happy path first, edge cases second
+□ Lock acquisition with timeout + finally block
+□ Atomic check-and-mutate under lock
+□ Walk through a concrete scenario to verify
 ```
 
-### 📝 Test Documentation Template
-
-```markdown
-## Test Strategy
-
-### Unit Tests
-- [List key scenarios to test]
-
-### Concurrency Tests
-- **Race Condition Tests**: [What to verify]
-- **Deadlock Tests**: [How to detect]
-- **Performance Tests**: [Load testing approach]
-
-### Edge Cases
-- [List boundary conditions]
+### Common Mistakes to Avoid
+```
+✗ Diving into code before clarifying requirements
+✗ Modeling every noun as a separate class
+✗ Forcing design patterns where they don't add value
+✗ Ignoring concurrency until the end
+✗ Spending too long on one section
+✗ Fighting the interviewer's direction
 ```
 
 ---
 
-## 📊 STEP 7: SCALABILITY & TRADE-OFFS (5-10 min)
-
-> **🧠 MINDSET**: "Every design decision has trade-offs"
-
-### ⚖️ Trade-offs Analysis
-
-```markdown
-## Design Trade-offs
-
-### Decision: [What you chose]
-**Pros:**
-- [Benefit 1]
-- [Benefit 2]
-
-**Cons:**
-- [Cost 1]
-- [Cost 2]
-
-**Alternatives Considered:**
-- [Alternative 1]: Why not chosen
-- [Alternative 2]: Why not chosen
-
-**When to Reconsider:**
-- [Condition that would make you change]
-```
-
-### 📈 Scalability Analysis
-
-```markdown
-## Scalability
-
-### Current Limitations
-- **Bottleneck**: [What limits scale]
-- **Breaking Point**: [When system fails]
-
-### Scaling Strategies
-1. **Vertical**: [Bigger machine approach]
-2. **Horizontal**: [More machines approach]
-3. **Caching**: [What to cache]
-4. **Partitioning**: [How to shard]
-5. **Async Processing**: [What to decouple]
-
-### Performance Characteristics
-- **Time Complexity**: O(?) for main operations
-- **Space Complexity**: O(?) for data storage
-- **Concurrency**: [How it scales with threads]
-```
-
----
-
-## 🚀 STEP 8: EXTENSIBILITY & FUTURE ENHANCEMENTS
-
-> **🧠 MINDSET**: "Design for change"
-
-### 🔮 Extension Points
-
-```markdown
-## How to Extend
-
-### Adding New Entity Types
-1. Implement [Interface/Base Class]
-2. Register in [Factory/Registry]
-3. Update [Configuration]
-
-### Adding New Features
-1. Create new [Service/Component]
-2. Integrate with [Existing Component]
-3. Update [API/Interface]
-
-### Adding External Integrations
-1. Create [Adapter/Wrapper]
-2. Handle [Failures/Timeouts]
-3. Transform [Data Format]
-```
-
-### 📋 Future Roadmap
-
-```markdown
-## Future Enhancements
-
-### Phase 1: Immediate (< 1 month)
-- [Enhancement 1]
-- [Enhancement 2]
-
-### Phase 2: Short-term (1-3 months)
-- [Feature 1]
-- [Feature 2]
-
-### Phase 3: Long-term (3-6 months)
-- [Major feature 1]
-- [Architectural change]
-```
-
----
-
-## 🎯 STEP 9: INTERVIEW EVALUATION CHECKLIST
-
-> **🧠 MINDSET**: "What the interviewer is looking for"
-
-### ✅ Requirements (20%)
-- [ ] Asked clarifying questions
-- [ ] Identified functional vs non-functional requirements
-- [ ] Made reasonable assumptions
-- [ ] Understood problem domain
-
-### ✅ Design (30%)
-- [ ] Clear architecture with proper layers
-- [ ] Appropriate design patterns
-- [ ] SOLID principles followed
-- [ ] Extensible design
-- [ ] Good abstractions
-
-### ✅ Concurrency (20%)
-- [ ] Identified shared resources
-- [ ] Proper synchronization strategy
-- [ ] Prevented race conditions
-- [ ] Considered deadlocks
-- [ ] Documented thread-safety
-
-### ✅ Code Quality (20%)
-- [ ] Clean, readable code
-- [ ] Proper naming conventions
-- [ ] Error handling
-- [ ] Input validation
-- [ ] Minimal and focused
-
-### ✅ Communication (10%)
-- [ ] Explained thought process
-- [ ] Discussed trade-offs
-- [ ] Responded to feedback
-- [ ] Managed time well
-- [ ] Stayed organized
-
----
-
-## 📝 STEP 10: HOW TO RUN
-
-```bash
-# Compilation
-javac -d bin src/**/*.java
-
-# Execution
-java -cp bin com.company.SystemName
-
-# Testing
-java -cp bin:junit.jar org.junit.runner.JUnitCore TestClass
-```
-
-### Expected Output
-```
-[Show sample input/output]
-```
-
----
-
-## 🎓 INTERVIEW SUCCESS TIPS
-
-### ⏱️ Time Management
-
-| Phase | Time | Focus |
-|-------|------|-------|
-| **Requirements** | 10% | Clarify and document |
-| **Design** | 30% | Architecture and patterns |
-| **Implementation** | 40% | Core functionality |
-| **Testing/Discussion** | 20% | Edge cases and trade-offs |
-
-### 🎯 Common Mistakes to Avoid
-
-```
-❌ Jumping to code without design
-❌ Ignoring concurrency requirements
-❌ Over-engineering with unnecessary patterns
-❌ Not considering scalability
-❌ Poor time management
-❌ Not testing edge cases
-❌ Ignoring error handling
-```
-
-### ✅ How to Stand Out
-
-```
-✅ Systematic approach (use this template!)
-✅ Strong concurrency understanding
-✅ Clear communication of trade-offs
-✅ Testing mindset throughout
-✅ Real-world considerations
-✅ Clean, minimal code
-```
-
----
-
-## 🎯 QUICK REFERENCE CARD
-
-### Interview Flow
-```
-1. Clarify Requirements (5-10 min)
-2. Design Architecture (10-15 min)
-3. Identify Concurrency Needs (5 min)
-4. Implement Core Logic (20-30 min)
-5. Discuss Testing & Trade-offs (10 min)
-```
-
-### Concurrency Quick Check
-```
-□ What is shared?
-□ What is modified?
-□ What synchronization?
-□ What are race conditions?
-□ How to test?
-```
-
-### Code Quality Quick Check
-```
-□ SOLID principles?
-□ Proper naming?
-□ Error handling?
-□ Thread-safety documented?
-□ Edge cases handled?
-```
-
----
-
-**Remember**: This template is a guide, not a rigid checklist. Adapt based on:
-- Problem complexity
-- Interview length
-- Interviewer's focus
-- Your strengths
-
-**Focus on**: Clear thinking, clean code, and strong concurrency understanding! 🚀
+**Remember**: This framework is a guide, not a rigid script. Adapt based on the problem, the interviewer's focus, and the time remaining. The goal is to demonstrate clear thinking, clean structure, and production-level awareness — not to check every box.

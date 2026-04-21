@@ -115,11 +115,12 @@ class Show {
  */
 class Booking {
     private final String id, userId, showId;
+    private static final AtomicInteger counter = new AtomicInteger(0);
     private final List<String> seatIds;
     private volatile BookingStatus status;
     
-    public Booking(String id, String userId, String showId, List<String> seatIds) {
-        this.id = id;
+    public Booking(String userId, String showId, List<String> seatIds) {
+        this.id = "BKG-" + System.currentTimeMillis() + "-" + counter.incrementAndGet();
         this.userId = userId;
         this.showId = showId;
         this.seatIds = new ArrayList<>(seatIds);
@@ -207,7 +208,6 @@ class BookingService {
             
             // Create booking
             Booking booking = new Booking(
-                "BKG-" + System.currentTimeMillis() + "-" + (int)(Math.random() * 1000),
                 userId, showId, sorted
             );
             bookingRepo.save(booking);

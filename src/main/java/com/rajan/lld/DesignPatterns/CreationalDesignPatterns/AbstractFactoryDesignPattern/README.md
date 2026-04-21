@@ -194,15 +194,6 @@ Transaction transaction = factory.createTransaction();
 // All components work with same database!
 ```
 
-### 4. Document Generators
-```java
-DocumentFactory factory = new PDFFactory(); // or WordFactory, HTMLFactory
-Document doc = factory.createDocument();
-Image image = factory.createImage();
-Table table = factory.createTable();
-// All components compatible with same format!
-```
-
 ## 🔍 When to Use Abstract Factory
 
 Ask yourself:
@@ -269,60 +260,6 @@ factory.createRAM();
 - ❌ **Rigid structure** - Adding new product type affects all factories
 - ❌ **Overkill** - Too complex for simple scenarios
 
-## 🎓 Practice Exercise
-
-Create an Abstract Factory for a smartphone manufacturing system:
-
-**Requirements:**
-- Two brands: Apple and Samsung
-- Each brand has: Processor, Display, Camera
-- Ensure components from same brand
-
-**Solution:**
-```java
-interface Processor { String getSpec(); }
-interface Display { String getSpec(); }
-interface Camera { String getSpec(); }
-
-class AppleProcessor implements Processor { ... }
-class AppleDisplay implements Display { ... }
-class AppleCamera implements Camera { ... }
-
-class SamsungProcessor implements Processor { ... }
-class SamsungDisplay implements Display { ... }
-class SamsungCamera implements Camera { ... }
-
-interface SmartphoneFactory {
-    Processor createProcessor();
-    Display createDisplay();
-    Camera createCamera();
-}
-
-class AppleFactory implements SmartphoneFactory { ... }
-class SamsungFactory implements SmartphoneFactory { ... }
-
-// Usage
-SmartphoneFactory factory = new AppleFactory();
-Processor processor = factory.createProcessor();
-Display display = factory.createDisplay();
-Camera camera = factory.createCamera();
-// All Apple components - guaranteed compatible!
-```
-
-## 🔑 Key Takeaways
-
-1. **Factory**: Creates single objects
-2. **Abstract Factory**: Creates families of related objects
-3. **Guarantees compatibility** within product family
-4. **Easy to switch** entire families
-5. **Use when** products must work together
-
-## 🚀 When NOT to Use
-
-- When you only need to create single objects (use Factory)
-- When products don't need to be related
-- When simplicity is more important than flexibility
-- When you have only one product family
 
 ## 📝 Summary
 
@@ -340,14 +277,6 @@ Camera camera = factory.createCamera();
 
 ---
 
-**Remember**: Abstract Factory is like building a complete PC - you want all components (CPU, GPU, RAM) to be compatible. Use it when you need to ensure products work together!
-
-## 🔗 Related Patterns
-
-- **Factory Method** - Abstract Factory uses Factory Method to create products
-- **Singleton** - Factories are often implemented as Singletons
-- **Prototype** - Can use Prototype instead of Factory Method
-- **Builder** - Builder focuses on constructing complex objects step by step
 
 ## 🎯 Quick Decision Guide
 
@@ -362,38 +291,3 @@ Camera camera = factory.createCamera();
 - Need to switch entire families
 - Multiple related products (CPU + GPU + RAM)When you have only one product family
 
-## 📝 Summary
-
-**Factory Pattern**: 
-- Creates: Single objects
-- Use for: Simple object creation
-
-**Abstract Factory Pattern**:
-- Creates: Families of related objects
-- Use for: Related products that must work together
-
-**Key Advantage**: Guarantees all products are from the same family and compatible!
-
----
-
-**Remember**: Abstract Factory is like a factory that produces complete product families. Use it when you need to ensure products work together!
-
-## 🔗 Related Patterns
-
-- **Factory Method** - Abstract Factory uses Factory Method to create products
-- **Singleton** - Factories are often implemented as Singletons
-- **Prototype** - Can use Prototype instead of Factory Method
-- **Builder** - Builder focuses on constructing complex objects step by step
-
-## 🎯 Quick Decision Guide
-
-**Use Factory when:**
-- Creating single objects
-- Simple creation logic
-- Products are independent
-
-**Use Abstract Factory when:**
-- Creating families of objects
-- Products must be compatible
-- Need to switch entire families
-- Multiple related products

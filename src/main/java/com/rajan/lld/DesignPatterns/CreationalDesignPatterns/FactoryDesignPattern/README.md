@@ -285,52 +285,17 @@ Logger logger = LoggerFactory.create("FILE");
 logger.log("Application started");
 ```
 
-## 🔑 Key Takeaways
-
-1. **Decouples creation from usage**
-2. **Client works with interfaces**, not concrete classes
-3. **Easy to add new types** without changing client code
-4. **Centralizes creation logic**
-5. **Follows SOLID principles** (especially OCP)
 
 ## 🚀 When NOT to Use Factory
-
 - When you have only one or two product types
 - When object creation is simple (just `new`)
 - When you don't expect to add new types
 - When the added complexity isn't justified
 
 ## 📝 Summary
-
 **Problem**: Client tightly coupled to concrete classes → Hard to extend
-
 **Solution**: Factory creates objects → Client uses interface → Easy to extend
-
 **Simple Factory**: Good for simple cases, violates OCP
-
 **Factory Method**: More flexible, follows OCP, requires more classes
 
 ---
-
-**Remember**: Factory Pattern is about delegating object creation. Use it when creation logic is complex or you want to decouple creation from usage!
-
-## 🔗 Related Patterns
-
-- **Abstract Factory** - Factory of factories (creates families of related objects)
-- **Builder Pattern** - Constructs complex objects step by step
-- **Prototype Pattern** - Creates objects by cloning
-- **Singleton Pattern** - Can use factory to get singleton instance
-
-## 🆚 Factory vs Other Patterns
-
-**Factory vs Builder:**
-- Factory: Creates objects in one step
-- Builder: Constructs objects step by step
-
-**Factory vs Abstract Factory:**
-- Factory: Creates one type of object
-- Abstract Factory: Creates families of related objects
-
-**Factory vs Prototype:**
-- Factory: Creates new objects from scratch
-- Prototype: Creates objects by cloning existing ones
