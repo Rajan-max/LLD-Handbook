@@ -12,7 +12,6 @@ In simpler terms:
 ## 🎯 Core Concept
 
 **Problem**: Objects with many parameters (especially optional ones)
-
 **Solution**: Builder provides a fluent interface to construct objects step by step
 
 ## ❌ Problem - Telescoping Constructor Anti-Pattern
@@ -140,18 +139,7 @@ HttpRequest request = new HttpRequest.HttpRequestBuilder("https://api.example.co
         .build();
 ```
 
-### 4. SQL Query Builder
-```java
-Query query = new QueryBuilder()
-        .select("name", "email")
-        .from("users")
-        .where("age > 18")
-        .orderBy("name")
-        .limit(10)
-        .build();
-```
-
-### 5. StringBuilder (Java Built-in)
+### 4. StringBuilder (Java Built-in)
 ```java
 String result = new StringBuilder()
         .append("Hello")
@@ -354,13 +342,6 @@ Pizza pizza = new Pizza.PizzaBuilder("Large")
 ---
 
 **Remember**: Builder is like ordering a custom burger - you choose exactly what you want, and skip what you don't need!
-
-## 🔗 Related Patterns
-
-- **Factory Pattern** - Creates objects, but Builder constructs step by step
-- **Abstract Factory** - Creates families, Builder constructs complex single objects
-- **Prototype** - Clones objects, Builder constructs from scratch
-- **Fluent Interface** - Builder uses this for method chaining
 
 ## 🆚 Builder vs Factory
 

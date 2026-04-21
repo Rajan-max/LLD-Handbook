@@ -126,6 +126,43 @@ class Booking {
     public BookingStatus getStatus() { return status; }
 }
 
+class BookingRepository {
+    private final ConcurrentHashMap<String, Booking> bookings = new ConcurrentHashMap<>();
+
+    public void save(Booking booking) {
+        bookings.put(booking.getId(), booking);
+    }
+
+    public Booking findById(String id) {
+        return bookings.get(id);
+    }
+
+    public void delete(String id) {
+        bookings.remove(id);
+    }
+
+    public Map<String, Booking> getAll() { return new HashMap<>(bookings); }
+}
+
+
+class RoomManager {
+    private final ConcurrentHashMap<RoomType, List<Room>> roomsByType = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
+
+    public void addRoom(Room room) {
+        roomsByType.computeIfAbsent(room.getType(), k -> new ArrayList<>()).add(room);
+        roomLocks.put(room.getId(), new ReentrantLock(true));
+    }
+
+    public List<Room> getRoomByType(RoomType type) {
+        return roomsByType.getOrDefault(type, Collections.emptyList());
+    }
+
+    public ReentrantLock getRoomLock(String roomId) {
+        return roomLocks.get(roomId);
+    }
+}
+
 // ============================================================================
 // SERVICE
 // ============================================================================
@@ -134,82 +171,68 @@ class Booking {
  * Thread-Safety: Room-level locking
  */
 class BookingManager {
-    private final ConcurrentHashMap<String, Room> rooms = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Booking> bookings = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, Guest> guests = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<String, ReentrantLock> roomLocks = new ConcurrentHashMap<>();
-    
-    public void addRoom(Room room) {
-        rooms.put(room.getId(), room);
-        roomLocks.put(room.getId(), new ReentrantLock(true));
+    private final BookingRepository bookingRepository;
+    private final RoomManager roomManager;
+
+    public BookingManager(RoomManager roomManager) {
+        this.bookingRepository = new BookingRepository();
+        this.roomManager = roomManager;
     }
     
-    public void addGuest(Guest guest) {
-        guests.put(guest.getId(), guest);
-    }
-    
-    public List<Room> searchRooms(RoomType type, LocalDate checkIn, LocalDate checkOut) {
-        List<Room> available = new ArrayList<>();
-        for (Room room : rooms.values()) {
-            ReentrantLock lock = roomLocks.get(room.getId());
-            if (lock.tryLock()) {
-                try {
-                    if (room.getType() == type && room.isAvailable(checkIn, checkOut)) {
-                        available.add(room);
+    public Booking SearchAndLockRoom(Guest guest, RoomType type, LocalDate checkIn, LocalDate checkOut) {
+        List<Room> rooms = roomManager.getRoomByType(type);
+        for (Room room : rooms) {
+            ReentrantLock lock = roomManager.getRoomLock(room.getId());
+            try {
+                if (lock.tryLock(5, TimeUnit.SECONDS)) {
+                    try {
+                        if (room.isAvailable(checkIn, checkOut)) {
+                            Booking booking = new Booking(guest, room, checkIn, checkOut);
+                            room.reserve(checkIn, checkOut, booking.getId());
+                            bookingRepository.save(booking);
+                            return booking;
+                        }
+                    } finally {
+                        lock.unlock();
                     }
-                } finally {
-                    lock.unlock();
                 }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new RuntimeException("Interrupted");
             }
         }
-        return available;
+        throw new IllegalStateException("No available rooms");
     }
     
-    public Booking bookRoom(String guestId, String roomId, LocalDate checkIn, LocalDate checkOut) {
-        Guest guest = guests.get(guestId);
-        Room room = rooms.get(roomId);
-        
-        if (guest == null || room == null) {
-            throw new IllegalArgumentException("Invalid guest or room");
+    public Booking confirmBooking(String bookingId) {
+        Booking booking = bookingRepository.findById(bookingId);
+        if (booking == null) {
+            throw new IllegalArgumentException("Booking not found");
         }
-        
-        if (checkIn.isAfter(checkOut) || checkIn.isBefore(LocalDate.now())) {
-            throw new IllegalArgumentException("Invalid dates");
-        }
-        
-        ReentrantLock lock = roomLocks.get(roomId);
+
+        Room room = booking.getRoom();
+        ReentrantLock lock = roomManager.getRoomLock(room.getId());
+
+        lock.lock();
         try {
-            if (lock.tryLock(5, TimeUnit.SECONDS)) {
-                try {
-                    if (!room.isAvailable(checkIn, checkOut)) {
-                        throw new IllegalStateException("Room not available");
-                    }
-                    
-                    Booking booking = new Booking(guest, room, checkIn, checkOut);
-                    room.reserve(checkIn, checkOut, booking.getId());
-                    bookings.put(booking.getId(), booking);
-                    booking.confirm();
-                    
-                    return booking;
-                } finally {
-                    lock.unlock();
-                }
+            if (booking.getStatus() != BookingStatus.PENDING) {
+                throw new IllegalStateException("Booking cannot be confirmed");
             }
-            throw new RuntimeException("Booking timeout");
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new RuntimeException("Interrupted");
+            booking.confirm();
+            return booking;
+        } finally {
+            lock.unlock();
         }
     }
     
     public void cancelBooking(String bookingId) {
-        Booking booking = bookings.get(bookingId);
+        Booking booking = bookingRepository.findById(bookingId);
         if (booking == null) {
             throw new IllegalArgumentException("Booking not found");
         }
         
         Room room = booking.getRoom();
-        ReentrantLock lock = roomLocks.get(room.getId());
+        ReentrantLock lock = roomManager.getRoomLock(room.getId());
         
         lock.lock();
         try {
@@ -219,8 +242,6 @@ class BookingManager {
             lock.unlock();
         }
     }
-    
-    public Map<String, Booking> getBookings() { return new HashMap<>(bookings); }
 }
 
 // ============================================================================
@@ -245,27 +266,27 @@ public class HotelBookingSystemComplete {
     private static void runDemo() {
         System.out.println("=== DEMO ===\n");
         
-        BookingManager manager = new BookingManager();
+        RoomManager roomManager = new RoomManager();
+        roomManager.addRoom(new Room("R1", RoomType.SINGLE));
+        roomManager.addRoom(new Room("R2", RoomType.DOUBLE));
+        roomManager.addRoom(new Room("R3", RoomType.SUITE));
         
-        manager.addRoom(new Room("R1", RoomType.SINGLE));
-        manager.addRoom(new Room("R2", RoomType.DOUBLE));
-        manager.addRoom(new Room("R3", RoomType.SUITE));
-        
-        manager.addGuest(new Guest("G1", "John Doe"));
-        manager.addGuest(new Guest("G2", "Jane Smith"));
+        BookingManager manager = new BookingManager(roomManager);
         
         System.out.println("✓ Setup: 3 rooms, 2 guests\n");
         
         LocalDate checkIn = LocalDate.now().plusDays(7);
         LocalDate checkOut = LocalDate.now().plusDays(10);
         
-        List<Room> available = manager.searchRooms(RoomType.DOUBLE, checkIn, checkOut);
-        System.out.println("✓ Search: Found " + available.size() + " DOUBLE rooms\n");
+        Booking booking1 = manager.SearchAndLockRoom(new Guest("G1", "Rajan"), RoomType.DOUBLE, checkIn, checkOut);
+        if (booking1 != null) {
+            System.out.println("✓ Search & Lock: Found room " + booking1.getRoom().getId() + " for Guest " + booking1.getGuest().getName());
+        }
         
-        Booking booking = manager.bookRoom("G1", "R2", checkIn, checkOut);
-        System.out.println("✓ Booking: " + booking.getId());
-        System.out.println("  Amount: $" + booking.getTotalAmount());
-        System.out.println("  Status: " + booking.getStatus() + "\n");
+        Booking confirmed = manager.confirmBooking(booking1.getId());
+        System.out.println("✓ Booking: " + confirmed.getId());
+        System.out.println("  Amount: $" + confirmed.getTotalAmount());
+        System.out.println("  Status: " + confirmed.getStatus() + "\n");
     }
     
     private static void runConcurrencyTests() throws Exception {
@@ -280,12 +301,10 @@ public class HotelBookingSystemComplete {
     private static void test1_SingleRoomConcurrent() throws Exception {
         System.out.println("Test 1: Single Room Concurrent Booking");
         
-        BookingManager manager = new BookingManager();
-        manager.addRoom(new Room("T1", RoomType.SINGLE));
+        RoomManager roomManager = new RoomManager();
+        roomManager.addRoom(new Room("T1", RoomType.SINGLE));
         
-        for (int i = 0; i < 10; i++) {
-            manager.addGuest(new Guest("TG" + i, "User" + i));
-        }
+        BookingManager manager = new BookingManager(roomManager);
         
         LocalDate checkIn = LocalDate.now().plusDays(30);
         LocalDate checkOut = LocalDate.now().plusDays(33);
@@ -297,7 +316,8 @@ public class HotelBookingSystemComplete {
             final int idx = i;
             futures.add(executor.submit(() -> {
                 try {
-                    manager.bookRoom("TG" + idx, "T1", checkIn, checkOut);
+                    Booking booking = manager.SearchAndLockRoom(new Guest("TG" + idx, "User" + idx), RoomType.SINGLE, checkIn, checkOut);
+                    manager.confirmBooking(booking.getId());
                     return true;
                 } catch (Exception e) {
                     return false;
@@ -320,12 +340,12 @@ public class HotelBookingSystemComplete {
     private static void test2_DifferentRooms() throws Exception {
         System.out.println("Test 2: Different Rooms Concurrent");
         
-        BookingManager manager = new BookingManager();
-        
+        RoomManager roomManager = new RoomManager();
         for (int i = 0; i < 10; i++) {
-            manager.addRoom(new Room("T2-" + i, RoomType.DOUBLE));
-            manager.addGuest(new Guest("TG2-" + i, "User" + i));
+            roomManager.addRoom(new Room("T2-" + i, RoomType.DOUBLE));
         }
+        
+        BookingManager manager = new BookingManager(roomManager);
         
         LocalDate checkIn = LocalDate.now().plusDays(40);
         LocalDate checkOut = LocalDate.now().plusDays(43);
@@ -337,7 +357,8 @@ public class HotelBookingSystemComplete {
             final int idx = i;
             futures.add(executor.submit(() -> {
                 try {
-                    manager.bookRoom("TG2-" + idx, "T2-" + idx, checkIn, checkOut);
+                    Booking booking = manager.SearchAndLockRoom(new Guest("TG2-" + idx, "User" + idx), RoomType.DOUBLE, checkIn, checkOut);
+                    manager.confirmBooking(booking.getId());
                     return true;
                 } catch (Exception e) {
                     return false;
@@ -360,10 +381,10 @@ public class HotelBookingSystemComplete {
     private static void test3_OverlappingDates() throws Exception {
         System.out.println("Test 3: Overlapping Dates");
         
-        BookingManager manager = new BookingManager();
-        manager.addRoom(new Room("T3", RoomType.SUITE));
-        manager.addGuest(new Guest("TG3-1", "User1"));
-        manager.addGuest(new Guest("TG3-2", "User2"));
+        RoomManager roomManager = new RoomManager();
+        roomManager.addRoom(new Room("T3", RoomType.SUITE));
+        
+        BookingManager manager = new BookingManager(roomManager);
         
         LocalDate checkIn1 = LocalDate.now().plusDays(50);
         LocalDate checkOut1 = LocalDate.now().plusDays(55);
@@ -374,7 +395,8 @@ public class HotelBookingSystemComplete {
         
         Future<Boolean> f1 = executor.submit(() -> {
             try {
-                manager.bookRoom("TG3-1", "T3", checkIn1, checkOut1);
+                Booking booking = manager.SearchAndLockRoom(new Guest("TG3-1", "User1"), RoomType.SUITE, checkIn1, checkOut1);
+                manager.confirmBooking(booking.getId());
                 return true;
             } catch (Exception e) {
                 return false;
@@ -384,7 +406,8 @@ public class HotelBookingSystemComplete {
         Future<Boolean> f2 = executor.submit(() -> {
             try {
                 Thread.sleep(50);
-                manager.bookRoom("TG3-2", "T3", checkIn2, checkOut2);
+                Booking booking = manager.SearchAndLockRoom(new Guest("TG3-2", "User2"), RoomType.SUITE, checkIn2, checkOut2);
+                manager.confirmBooking(booking.getId());
                 return true;
             } catch (Exception e) {
                 return false;
@@ -405,15 +428,16 @@ public class HotelBookingSystemComplete {
     private static void test4_CancelAndBook() throws Exception {
         System.out.println("Test 4: Concurrent Cancel and Book");
         
-        BookingManager manager = new BookingManager();
-        manager.addRoom(new Room("T4", RoomType.DOUBLE));
-        manager.addGuest(new Guest("TG4-1", "User1"));
-        manager.addGuest(new Guest("TG4-2", "User2"));
+        RoomManager roomManager = new RoomManager();
+        roomManager.addRoom(new Room("T4", RoomType.DOUBLE));
+        
+        BookingManager manager = new BookingManager(roomManager);
         
         LocalDate checkIn = LocalDate.now().plusDays(60);
         LocalDate checkOut = LocalDate.now().plusDays(63);
         
-        Booking initial = manager.bookRoom("TG4-1", "T4", checkIn, checkOut);
+        Booking initial = manager.SearchAndLockRoom(new Guest("TG4-1", "User1"), RoomType.DOUBLE, checkIn, checkOut);
+        manager.confirmBooking(initial.getId());
         
         ExecutorService executor = Executors.newFixedThreadPool(2);
         
@@ -429,7 +453,8 @@ public class HotelBookingSystemComplete {
         Future<Boolean> book = executor.submit(() -> {
             try {
                 Thread.sleep(100);
-                manager.bookRoom("TG4-2", "T4", checkIn, checkOut);
+                Booking booking = manager.SearchAndLockRoom(new Guest("TG4-2", "User2"), RoomType.DOUBLE, checkIn, checkOut);
+                manager.confirmBooking(booking.getId());
                 return true;
             } catch (Exception e) {
                 return false;

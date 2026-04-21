@@ -1,7 +1,5 @@
 # Concurrency Quick Reference - Interview Cheat Sheet 📋
 
-> **Print this before your interview!**
-
 ---
 
 ## 🎯 Pattern Selection (30 seconds)

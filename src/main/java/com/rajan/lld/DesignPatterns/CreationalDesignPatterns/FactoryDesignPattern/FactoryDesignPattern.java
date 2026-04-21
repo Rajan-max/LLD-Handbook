@@ -244,63 +244,6 @@ class PushNotificationCreator extends NotificationCreator {
 
 
 // ============================================================================
-// REAL-WORLD EXAMPLE - Vehicle Factory
-// ============================================================================
-
-interface Vehicle {
-    void drive();
-    String getType();
-}
-
-class Car implements Vehicle {
-    @Override
-    public void drive() {
-        System.out.println("Driving a car on the road");
-    }
-    
-    @Override
-    public String getType() {
-        return "Car";
-    }
-}
-
-class Bike implements Vehicle {
-    @Override
-    public void drive() {
-        System.out.println("Riding a bike");
-    }
-    
-    @Override
-    public String getType() {
-        return "Bike";
-    }
-}
-
-class Truck implements Vehicle {
-    @Override
-    public void drive() {
-        System.out.println("Driving a heavy truck");
-    }
-    
-    @Override
-    public String getType() {
-        return "Truck";
-    }
-}
-
-class VehicleFactory {
-    public static Vehicle createVehicle(String type) {
-        return switch (type.toUpperCase()) {
-            case "CAR" -> new Car();
-            case "BIKE" -> new Bike();
-            case "TRUCK" -> new Truck();
-            default -> throw new IllegalArgumentException("Unknown vehicle type");
-        };
-    }
-}
-
-
-// ============================================================================
 // DEMO - Compare all approaches
 // ============================================================================
 
@@ -340,23 +283,7 @@ public class FactoryDesignPattern {
         email.send("Factory Method Email");
         sms.send("Factory Method SMS");
         push.send("Factory Method Push");
-        
-        System.out.println("\n========================================");
-        System.out.println("REAL-WORLD - Vehicle Factory");
-        System.out.println("========================================\n");
-        
-        Vehicle car = VehicleFactory.createVehicle("CAR");
-        Vehicle bike = VehicleFactory.createVehicle("BIKE");
-        Vehicle truck = VehicleFactory.createVehicle("TRUCK");
-        
-        System.out.println("Created: " + car.getType());
-        car.drive();
-        
-        System.out.println("\nCreated: " + bike.getType());
-        bike.drive();
-        
-        System.out.println("\nCreated: " + truck.getType());
-        truck.drive();
+
         
         System.out.println("\n========================================");
         System.out.println("KEY TAKEAWAYS");

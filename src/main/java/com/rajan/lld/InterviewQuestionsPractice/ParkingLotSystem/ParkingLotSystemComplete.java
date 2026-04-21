@@ -103,14 +103,25 @@ class ParkingSlot {
 class Floor {
     private final int number;
     private final List<ParkingSlot> slots;
+    private final ConcurrentHashMap<String, ReentrantLock> slotLocks;
     
     public Floor(int number, List<ParkingSlot> slots) {
         this.number = number;
         this.slots = new ArrayList<>(slots);
+
+        // Initialize locks for each slot
+        this.slotLocks = new ConcurrentHashMap<>();
+        for (ParkingSlot slot : slots) {
+            slotLocks.put(slot.getId(), new ReentrantLock(true)); // Fair lock
+        }
     }
     
     public int getNumber() { return number; }
     public List<ParkingSlot> getSlots() { return slots; }
+
+    public ReentrantLock getLockForSlot(String slotId) {
+        return slotLocks.get(slotId);
+    }
 }
 
 class ParkingLot {
@@ -124,6 +135,9 @@ class ParkingLot {
     
     public String getId() { return id; }
     public List<Floor> getFloors() { return floors; }
+    public Optional<Floor> getFloor(int floorNumber) {
+        return floors.stream().filter(f -> f.getNumber() == floorNumber).findFirst();
+    }
 }
 
 /**
@@ -131,13 +145,16 @@ class ParkingLot {
  */
 class Ticket {
     private final String id;
+    private static final AtomicInteger idGen = new AtomicInteger(0);
+    private final int floorNumber;
     private final ParkingSlot slot;
     private final Vehicle vehicle;
     private final LocalDateTime entryTime;
     private volatile LocalDateTime exitTime;
     
-    public Ticket(String id, ParkingSlot slot, Vehicle vehicle) {
-        this.id = id;
+    public Ticket(int floorNumber, ParkingSlot slot, Vehicle vehicle) {
+        this.id = "TK-" + idGen.incrementAndGet();
+        this.floorNumber = floorNumber;
         this.slot = slot;
         this.vehicle = vehicle;
         this.entryTime = LocalDateTime.now();
@@ -154,10 +171,25 @@ class Ticket {
     }
     
     public String getId() { return id; }
+    public int getFloorNumber() { return floorNumber; }
     public ParkingSlot getSlot() { return slot; }
     public Vehicle getVehicle() { return vehicle; }
     public LocalDateTime getEntryTime() { return entryTime; }
     public LocalDateTime getExitTime() { return exitTime; }
+}
+
+
+// ============================================================================
+class TicketRepository {
+    private final ConcurrentHashMap<String, Ticket> tickets = new ConcurrentHashMap<>();
+
+    public void save(Ticket ticket) {
+        tickets.put(ticket.getId(), ticket);
+    }
+
+    public Ticket findById(String id) {
+        return tickets.get(id);
+    }
 }
 
 // ============================================================================
@@ -185,6 +217,7 @@ class HourlyPricing implements PricingStrategy {
     }
 }
 
+
 // ============================================================================
 // SERVICE - Core Business Logic with Concurrency Control
 // ============================================================================
@@ -195,24 +228,13 @@ class HourlyPricing implements PricingStrategy {
  */
 class ParkingManager {
     private final ParkingLot parkingLot;
-    private final ConcurrentHashMap<String, Ticket> tickets;
-    private final ConcurrentHashMap<String, ReentrantLock> slotLocks;
+    private final TicketRepository ticketRepository;
     private final PricingStrategy pricingStrategy;
-    private final AtomicInteger ticketCounter;
     
     public ParkingManager(ParkingLot parkingLot, PricingStrategy pricingStrategy) {
         this.parkingLot = parkingLot;
+        this.ticketRepository = new TicketRepository();
         this.pricingStrategy = pricingStrategy;
-        this.tickets = new ConcurrentHashMap<>();
-        this.slotLocks = new ConcurrentHashMap<>();
-        this.ticketCounter = new AtomicInteger(0);
-        
-        // Initialize locks for all slots
-        for (Floor floor : parkingLot.getFloors()) {
-            for (ParkingSlot slot : floor.getSlots()) {
-                slotLocks.put(slot.getId(), new ReentrantLock(true)); // Fair lock
-            }
-        }
     }
     
     /**
@@ -222,7 +244,10 @@ class ParkingManager {
     public Ticket parkVehicle(Vehicle vehicle) {
         for (Floor floor : parkingLot.getFloors()) {
             for (ParkingSlot slot : floor.getSlots()) {
-                ReentrantLock lock = slotLocks.get(slot.getId());
+                if(slot.getType() != SlotType.valueOf(vehicle.getType().name())) {
+                    continue; // Skip incompatible slot types
+                }
+                ReentrantLock lock = floor.getLockForSlot(slot.getId());
                 
                 // Try to acquire lock (non-blocking)
                 if (lock.tryLock()) {
@@ -231,11 +256,11 @@ class ParkingManager {
                         if (slot.canFit(vehicle)) {
                             slot.park(vehicle);
                             Ticket ticket = new Ticket(
-                                "T" + ticketCounter.incrementAndGet(),
+                                 floor.getNumber(),
                                 slot,
                                 vehicle
                             );
-                            tickets.put(ticket.getId(), ticket);
+                            ticketRepository.save(ticket);
                             return ticket;
                         }
                     } finally {
@@ -252,7 +277,7 @@ class ParkingManager {
      * Frees slot and calculates fee atomically
      */
     public double exitVehicle(String ticketId) {
-        Ticket ticket = tickets.get(ticketId);
+        Ticket ticket = ticketRepository.findById(ticketId);
         if (ticket == null) {
             throw new IllegalArgumentException("Invalid ticket: " + ticketId);
         }
@@ -261,9 +286,11 @@ class ParkingManager {
         }
         
         ParkingSlot slot = ticket.getSlot();
-        ReentrantLock lock = slotLocks.get(slot.getId());
+        Floor floor = parkingLot.getFloor(ticket.getFloorNumber())
+                                .orElseThrow(() -> new IllegalStateException("Invalid floor: " + ticket.getFloorNumber()));
+        ReentrantLock lock = floor.getLockForSlot(slot.getId());
         
-        lock.lock();
+        lock.lock();  //Must acquire lock to free slot and update ticket
         try {
             slot.free();
             ticket.setExitTime(LocalDateTime.now());

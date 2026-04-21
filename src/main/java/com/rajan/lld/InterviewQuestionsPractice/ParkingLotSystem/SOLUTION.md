@@ -1,186 +1,219 @@
 # Parking Lot System - LLD Interview Solution 🅿️
-
-> **Following**: LLD_INTERVIEW_TEMPLATE.md structure with strong concurrency focus
-
 ---
 
-## 🎯 STEP 1: REQUIREMENTS GATHERING
+## 1) Requirements (~5 min)
 
-### Functional Requirements
+**Prompt**: "Design a parking lot system where vehicles are assigned to spots as they pull in."
 
-1. **FR1**: Support multiple floors in parking lot
-2. **FR2**: Support different vehicle types (Bike, Car, Truck)
-3. **FR3**: Each floor has different slot types (BIKE, CAR, TRUCK)
-4. **FR4**: Park vehicle and issue ticket with entry time
-5. **FR5**: Calculate parking fee based on duration and vehicle type
-6. **FR6**: Free slot after vehicle exit
-7. **FR7**: Display available slots by type
-8. **FR8**: Handle edge cases (full lot, invalid tickets, double exit)
+### Clarifying Questions
 
-### Non-Functional Requirements
+| Theme | Question | Answer |
+|---|---|---|
+| **Primary capabilities** | What operations? | Park vehicle, exit vehicle, calculate fee |
+| **Primary capabilities** | Multiple floors? | Yes, each floor has slots of different types |
+| **Rules** | How are slots assigned? | First available matching slot (first-come-first-served) |
+| **Rules** | How is fee calculated? | Hourly pricing, different rates per vehicle type |
+| **Error handling** | What if lot is full? | Reject with error |
+| **Error handling** | Invalid ticket on exit? | Reject with error |
+| **Scope** | Concurrent access? | Yes, multiple vehicles parking/exiting simultaneously |
 
-1. **NFR1**: **Concurrency** - Support 100+ concurrent park/exit operations
-2. **NFR2**: **Performance** - Park/exit response time < 100ms
-3. **NFR3**: **Consistency** - No double-booking of slots
-4. **NFR4**: **Availability** - 99.9% uptime
-5. **NFR5**: **Scale** - Support 1000+ parking slots
-6. **NFR6**: **Extensibility** - Easy to add new vehicle types and pricing strategies
-
-### Assumptions
-
-1. In-memory storage (production would use database)
-2. Single parking lot (can extend to multiple)
-3. Hourly-based pricing
-4. Each slot fits only its designated vehicle type
-5. Tickets are unique and cannot be reused
-6. No reservation system (first-come-first-served)
-
-### Out of Scope
-
-1. Payment gateway integration
-2. User authentication
-3. Reservation system
-4. Valet parking
-5. Electric vehicle charging
-6. Handicap parking
-
----
-
-## 🏗️ STEP 2: DOMAIN MODELING
-
-### Core Entities
-
-#### **ParkingLot**
-- **Purpose**: Root aggregate managing entire parking facility
-- **Attributes**: id, name, floors
-- **Lifecycle**: Created by admin, immutable structure
-
-#### **Floor**
-- **Purpose**: Represents one level of parking
-- **Attributes**: floorNumber, slots
-- **Lifecycle**: Created with parking lot, slots can be added
-
-#### **ParkingSlot**
-- **Purpose**: Individual parking space
-- **Attributes**: id, type, occupied, vehicle
-- **Status**: FREE → OCCUPIED → FREE
-- **Concurrency**: High contention point - needs locking
-
-#### **Vehicle**
-- **Purpose**: Entity being parked
-- **Types**: Bike, Car, Truck
-- **Attributes**: number, type
-- **Lifecycle**: Immutable
-
-#### **Ticket**
-- **Purpose**: Proof of parking
-- **Attributes**: id, slot, vehicle, entryTime, exitTime
-- **Lifecycle**: Created on park, updated on exit
-- **Concurrency**: Read-heavy, minimal contention
-
-#### **PricingStrategy**
-- **Purpose**: Calculate parking fees
-- **Types**: HourlyPricing, FlatRatePricing
-- **Attributes**: rates per vehicle type
-
-### Entity Relationships
+### Requirements
 
 ```
-ParkingLot (1) ──has──> (N) Floor
-Floor (1) ──has──> (N) ParkingSlot
-ParkingSlot (1) ──parks──> (0..1) Vehicle
-Ticket (1) ──for──> (1) Vehicle
-Ticket (1) ──at──> (1) ParkingSlot
-PricingStrategy ──calculates fee for──> Ticket
+1. Multiple floors, each with slots of different types (BIKE, CAR, TRUCK)
+2. Park vehicle in first available matching slot, issue ticket with entry time
+3. Calculate fee based on duration and vehicle type (hourly pricing)
+4. Free slot on exit
+5. Display available slots by type
+6. No double-parking under concurrent access
+
+Out of Scope:
+- Reservation system
+- Valet parking / EV charging
+- Payment gateway integration
+- User authentication
+- Handicap parking
 ```
 
 ---
 
-## 🎨 STEP 3: DESIGN PATTERNS & ARCHITECTURE
-
-### Architecture Layers
+## 2) Entities & Relationships (~3 min)
 
 ```
-┌─────────────────────────────────────┐
-│   ParkingManager (Service Layer)    │ ← Entry point
-├─────────────────────────────────────┤
-│   Business Logic (Park/Exit)        │ ← Core logic + Concurrency
-├─────────────────────────────────────┤
-│   Repository Layer (In-memory)      │ ← Data storage
-├─────────────────────────────────────┤
-│   Domain Models (Entities)          │ ← ParkingLot, Floor, Slot
-└─────────────────────────────────────┘
+Entities:
+- ParkingSlot    (individual space — owns occupied/vehicle state)
+- Floor          (contains slots + per-slot locks)
+- ParkingLot     (contains floors)
+- Vehicle        (Bike, Car, Truck — immutable, what's being parked)
+- Ticket         (links floor + slot + vehicle + timestamps)
+- ParkingManager (orchestrator — park, exit, fee calculation)
+
+Relationships:
+- ParkingLot → Floor (1:N)
+- Floor → ParkingSlot (1:N) + per-slot ReentrantLocks
+- Ticket → ParkingSlot, Vehicle, floorNumber
+- ParkingManager → ParkingLot, TicketRepository, PricingStrategy
 ```
 
-### Design Patterns Used
-
-#### **1. Strategy Pattern** (Pricing)
-- **Problem**: Different pricing for different vehicle types
-- **Solution**: PricingStrategy interface with implementations
-- **Benefit**: Easy to add new pricing models
-
-#### **2. Factory Pattern** (Vehicle Creation)
-- **Problem**: Complex vehicle object creation
-- **Solution**: VehicleFactory creates appropriate vehicle type
-- **Benefit**: Centralized creation logic
-
-#### **3. Builder Pattern** (ParkingLot Construction)
-- **Problem**: Complex parking lot setup with multiple floors
-- **Solution**: ParkingLot.Builder for fluent construction
-- **Benefit**: Readable, flexible construction
-
-#### **4. Singleton Pattern** (ParkingManager)
-- **Problem**: Single point of coordination needed
-- **Solution**: Singleton ParkingManager instance
-- **Benefit**: Global access point (use carefully!)
+**Key decisions:**
+- Locks live inside Floor (not ParkingManager) — Floor owns its slots, so it owns their locks
+- Vehicle is an interface with Bike/Car/Truck implementations — type matching via enum
+- PricingStrategy is injected into ParkingManager — swappable at construction time
 
 ---
 
-## 🔐 STEP 4: CONCURRENCY CONTROL (CRITICAL!)
+## 3) Class Design (~10 min)
 
-### Concurrency Analysis
+### Deriving State from Requirements
 
-#### **Shared Resources**
-1. **ParkingSlot.occupied** - Multiple threads parking simultaneously
-2. **Floor.slots** - Finding available slots
-3. **Ticket map** - Storing/retrieving tickets
+| Requirement | What must be tracked | Where |
+|---|---|---|
+| "Slots of different types" | id, type, occupied, vehicle | ParkingSlot |
+| "Multiple floors" | floorNumber, slots, per-slot locks | Floor |
+| "Issue ticket with entry time" | id, floorNumber, slot, vehicle, entryTime, exitTime | Ticket |
+| "Calculate fee by duration and type" | rates per vehicle type | PricingStrategy |
+| "No double-parking" | per-slot ReentrantLock | Floor |
 
-#### **Critical Sections**
-1. **Find and park** - Check availability + Park (must be atomic)
-2. **Exit and free** - Validate ticket + Free slot (must be atomic)
-3. **Slot status update** - Prevent race conditions
+### Deriving Behavior from Requirements
 
-#### **Race Conditions**
-1. **Double-parking**: Two threads park in same slot
-2. **Lost update**: Concurrent status changes overwrite
-3. **Phantom read**: Slot appears free but gets occupied
+| Need | Method | On |
+|---|---|---|
+| Park vehicle in first available slot | parkVehicle(vehicle) → Ticket | ParkingManager |
+| Exit and calculate fee | exitVehicle(ticketId) → double | ParkingManager |
+| Check available slots | getAvailableSlots(type) → long | ParkingManager |
+| Check if slot fits vehicle | canFit(vehicle) → bool | ParkingSlot |
+| Occupy / free a slot | park(vehicle), free() | ParkingSlot |
 
-### Concurrency Strategy: Slot-Level Locking ⭐
+### Class Outlines
 
-**Why Slot-Level Locking?**
-- ✅ Maximum parallelism (different slots = no contention)
-- ✅ Strong consistency (no double-parking)
-- ✅ Scalable (contention only on same slot)
-- ✅ Simple (no complex distributed locking needed)
+```
+interface Vehicle:
+  + getNumber() → String
+  + getType() → VehicleType
 
-**Implementation:**
+class ParkingSlot:                          // Caller MUST hold lock
+  - id: String
+  - type: SlotType
+  - occupied: volatile boolean
+  - vehicle: volatile Vehicle
+
+  + canFit(vehicle) → bool
+  + park(vehicle)
+  + free()
+
+class Floor:
+  - number: int
+  - slots: List<ParkingSlot>
+  - slotLocks: Map<String, ReentrantLock>   // Fair locks, one per slot
+
+  + getSlots() → List<ParkingSlot>
+  + getLockForSlot(slotId) → ReentrantLock
+
+class ParkingLot:
+  - id: String
+  - floors: List<Floor>
+
+  + getFloors() → List<Floor>
+  + getFloor(floorNumber) → Optional<Floor>
+
+class Ticket:
+  - id: String (auto-generated)
+  - floorNumber: int
+  - slot: ParkingSlot
+  - vehicle: Vehicle
+  - entryTime: LocalDateTime
+  - exitTime: volatile LocalDateTime
+
+  + setExitTime(time)
+  + getDurationHours() → long              // Rounds up to nearest hour
+
+class ParkingManager:                       // Orchestrator
+  - parkingLot: ParkingLot
+  - ticketRepository: TicketRepository
+  - pricingStrategy: PricingStrategy
+
+  + parkVehicle(vehicle) → Ticket
+  + exitVehicle(ticketId) → double
+  + getAvailableSlots(type) → long
+
+interface PricingStrategy:
+  + calculateFee(ticket) → double
+```
+
+---
+
+## 4) Concurrency Control (~5 min)
+
+### Three Questions
+
+**What is shared?**
+- ParkingSlot.occupied / ParkingSlot.vehicle — multiple threads parking simultaneously
+
+**What can go wrong?**
+- Double-parking: Two threads park in the same slot
+- Lost update: Concurrent status changes overwrite each other
+
+**What's the locking strategy?**
+- Slot-level locking. Each slot has its own ReentrantLock inside Floor.
+
+### Why Slot-Level Locking?
+
+| Approach | Throughput | Decision |
+|---|---|---|
+| **Lot-level lock** | Very low (serializes everything) | ❌ Too coarse |
+| **Floor-level lock** | Low (serializes per floor) | ❌ Still too coarse |
+| **Slot-level lock** | High (parallel across all slots) | ✅ Chosen |
+
+### Concurrency Strategy
+
+```
+Shared resource:
+- ParkingSlot.occupied — multiple threads trying to park in same slot
+
+Race condition prevented:
+- Double-parking: tryLock + canFit + park is atomic under lock
+
+Locking approach:
+- Each slot has its own ReentrantLock(true) — fair lock, inside Floor
+- parkVehicle uses tryLock() (non-blocking) — skip to next slot if locked
+- exitVehicle uses lock() (blocking) — must free the specific slot
+
+Thread-safety:
+- ParkingSlot: volatile fields + external lock (caller MUST hold lock)
+- Floor: immutable slot list, ConcurrentHashMap for locks
+- ParkingLot: immutable floor list
+- Ticket: immutable after creation, exitTime updated once via volatile
+- TicketRepository: ConcurrentHashMap
+```
+
+**Why tryLock() for parking (non-blocking)?**
+A vehicle doesn't care *which* slot it gets — if one is locked, skip to the next. No need to wait.
+
+**Why lock() for exit (blocking)?**
+A vehicle *must* free its specific slot. We have to wait for the lock.
+
+---
+
+## 5) Implementation (~10 min)
+
+### Core Method: parkVehicle
 
 ```java
-// 1. Each slot has its own lock
-private final ConcurrentHashMap<String, ReentrantLock> slotLocks;
-
-// 2. Atomic find-and-park operation
 public Ticket parkVehicle(Vehicle vehicle) {
-    for (Floor floor : floors) {
+    for (Floor floor : parkingLot.getFloors()) {
         for (ParkingSlot slot : floor.getSlots()) {
-            ReentrantLock lock = slotLocks.get(slot.getId());
-            
-            if (lock.tryLock()) {
+            if (slot.getType() != SlotType.valueOf(vehicle.getType().name()))
+                continue; // Skip incompatible slot types
+
+            ReentrantLock lock = floor.getLockForSlot(slot.getId());
+
+            if (lock.tryLock()) {                    // Non-blocking
                 try {
-                    // Check and park atomically
-                    if (slot.canFit(vehicle)) {
+                    if (slot.canFit(vehicle)) {      // Atomic check + park
                         slot.park(vehicle);
-                        return createTicket(slot, vehicle);
+                        Ticket ticket = new Ticket(floor.getNumber(), slot, vehicle);
+                        ticketRepository.save(ticket);
+                        return ticket;
                     }
                 } finally {
                     lock.unlock();
@@ -188,454 +221,129 @@ public Ticket parkVehicle(Vehicle vehicle) {
             }
         }
     }
-    throw new RuntimeException("No available slot");
+    throw new RuntimeException("No available slot for " + vehicle.getType());
 }
+```
 
-// 3. Atomic exit operation
+**What this demonstrates:**
+- Skips incompatible slot types early (no wasted lock attempts)
+- tryLock() — non-blocking, moves to next slot if this one is contended
+- Atomic canFit + park under lock — no gap for another thread to sneak in
+- Lock released in finally — even if park() throws
+
+### Core Method: exitVehicle
+
+```java
 public double exitVehicle(String ticketId) {
-    Ticket ticket = tickets.get(ticketId);
+    Ticket ticket = ticketRepository.findById(ticketId);
+    if (ticket == null)
+        throw new IllegalArgumentException("Invalid ticket: " + ticketId);
+    if (ticket.getExitTime() != null)
+        throw new IllegalStateException("Vehicle already exited");
+
     ParkingSlot slot = ticket.getSlot();
-    ReentrantLock lock = slotLocks.get(slot.getId());
-    
-    lock.lock();
+    Floor floor = parkingLot.getFloor(ticket.getFloorNumber())
+                            .orElseThrow(() -> new IllegalStateException("Invalid floor"));
+    ReentrantLock lock = floor.getLockForSlot(slot.getId());
+
+    lock.lock();                                     // Blocking — must free this specific slot
     try {
         slot.free();
         ticket.setExitTime(LocalDateTime.now());
-        return calculateFee(ticket);
+        return pricingStrategy.calculateFee(ticket);
     } finally {
         lock.unlock();
     }
 }
 ```
 
-### Thread-Safety Guarantees
+**Edge cases handled:**
+- Invalid ticket ID → IllegalArgumentException
+- Double exit (already exited) → IllegalStateException
+- Fee calculation delegated to PricingStrategy (Strategy pattern)
 
-| Component | Thread-Safety | Mechanism |
-|-----------|---------------|-----------|
-| **ParkingSlot** | Thread-safe | Volatile status + External lock |
-| **Floor** | Thread-safe | Immutable slot list |
-| **ParkingLot** | Thread-safe | Immutable floor list |
-| **Ticket** | Thread-safe | Immutable after creation |
-| **ParkingManager** | Thread-safe | Slot-level locking |
-| **TicketRepository** | Thread-safe | ConcurrentHashMap |
-
-### Concurrency Alternatives Considered
-
-| Approach | Pros | Cons | Decision |
-|----------|------|------|----------|
-| **Floor-level lock** | Simple | Low throughput | ❌ Too coarse |
-| **Slot-level lock** | High throughput | More memory | ✅ **Chosen** |
-| **Optimistic locking** | No blocking | Retry storms | ❌ High contention |
-| **Database locking** | Distributed | Network latency | ❌ Overkill for single server |
-
----
-
-## 💻 STEP 5: CLASS DESIGN & IMPLEMENTATION
-
-### Class Structure
+### Verification: Walk Through a Scenario
 
 ```
-com.rajan.lld.InterviewQuestionsPractice.ParkingLotSystem
-├── ParkingLotSystemComplete.java (All-in-one)
-│   ├── Enums (VehicleType, SlotType)
-│   ├── Models (Vehicle, ParkingSlot, Floor, ParkingLot, Ticket)
-│   ├── Strategy (PricingStrategy, HourlyPricing)
-│   ├── Service (ParkingManager)
-│   └── Demo (Main class with tests)
-```
+Scenario: Two threads try to park a CAR simultaneously, only 1 CAR slot left
 
-### Key Classes
+Thread A: parkVehicle(Car("C1"))
+  → Iterates to F1-CAR-1
+  → tryLock() succeeds
+  → canFit(Car) = true
+  → slot.park(Car("C1")), issues Ticket TK-1
+  → Releases lock
 
-#### **ParkingSlot** (High Concurrency)
-```java
-/**
- * Thread-Safety: Thread-safe using volatile + external lock
- * Concurrency: Caller MUST hold lock before modifying
- */
-class ParkingSlot {
-    private final String id;
-    private final SlotType type;
-    private volatile boolean occupied;
-    private volatile Vehicle vehicle;
-    
-    // Caller MUST hold lock
-    public boolean canFit(Vehicle v) {
-        return !occupied && type.name().equals(v.getType().name());
-    }
-    
-    // Caller MUST hold lock
-    public void park(Vehicle v) {
-        if (!canFit(v)) throw new IllegalStateException();
-        this.vehicle = v;
-        this.occupied = true;
-    }
-    
-    // Caller MUST hold lock
-    public void free() {
-        this.vehicle = null;
-        this.occupied = false;
-    }
-}
-```
+Thread B: parkVehicle(Car("C2"))
+  → Iterates to F1-CAR-1
+  → tryLock() fails (Thread A holds it) OR succeeds but canFit = false (already occupied)
+  → Moves to next slot... no more CAR slots
+  → Throws "No available slot for CAR"
 
-#### **ParkingManager** (Core Service)
-```java
-/**
- * Thread-Safety: Thread-safe using slot-level locking
- * Concurrency: Each slot has independent ReentrantLock
- */
-class ParkingManager {
-    private final ParkingLot parkingLot;
-    private final ConcurrentHashMap<String, Ticket> tickets;
-    private final ConcurrentHashMap<String, ReentrantLock> slotLocks;
-    private final PricingStrategy pricingStrategy;
-    
-    /**
-     * Park vehicle (Thread-safe)
-     * Finds first available slot and parks atomically
-     */
-    public Ticket parkVehicle(Vehicle vehicle) {
-        for (Floor floor : parkingLot.getFloors()) {
-            for (ParkingSlot slot : floor.getSlots()) {
-                ReentrantLock lock = slotLocks.get(slot.getId());
-                
-                if (lock.tryLock()) {
-                    try {
-                        if (slot.canFit(vehicle)) {
-                            slot.park(vehicle);
-                            Ticket ticket = new Ticket(
-                                generateTicketId(),
-                                slot,
-                                vehicle
-                            );
-                            tickets.put(ticket.getId(), ticket);
-                            return ticket;
-                        }
-                    } finally {
-                        lock.unlock();
-                    }
-                }
-            }
-        }
-        throw new RuntimeException("No available slot for " + vehicle.getType());
-    }
-    
-    /**
-     * Exit vehicle (Thread-safe)
-     * Frees slot and calculates fee atomically
-     */
-    public double exitVehicle(String ticketId) {
-        Ticket ticket = tickets.get(ticketId);
-        if (ticket == null) {
-            throw new IllegalArgumentException("Invalid ticket");
-        }
-        if (ticket.getExitTime() != null) {
-            throw new IllegalStateException("Vehicle already exited");
-        }
-        
-        ParkingSlot slot = ticket.getSlot();
-        ReentrantLock lock = slotLocks.get(slot.getId());
-        
-        lock.lock();
-        try {
-            slot.free();
-            ticket.setExitTime(LocalDateTime.now());
-            return pricingStrategy.calculateFee(ticket);
-        } finally {
-            lock.unlock();
-        }
-    }
-}
+✓ No double-parking. Atomic check + park under lock.
 ```
 
 ---
 
-## 🧪 STEP 6: TESTING STRATEGY
+## 6) Testing Strategy (~3 min)
 
-### Unit Tests (70%)
+**Functional tests:**
+- Park a bike, exit, verify fee = hourlyRate × hours (rounded up)
+- Park when lot is full → RuntimeException
+- Exit with invalid ticket → IllegalArgumentException
+- Double exit → IllegalStateException
 
-```java
-@Test
-public void testParkVehicle() {
-    // Happy path: Park vehicle in available slot
-}
+**Concurrency tests:**
+- **Different types in parallel**: 5 bikes + 3 cars + 2 trucks concurrently → all 10 succeed
+- **Same type, limited slots**: 10 bikes, only 5 BIKE slots → exactly 5 succeed, 5 fail
+- **Concurrent park and exit**: 3 threads parking + 3 threads exiting simultaneously → no race conditions
 
-@Test
-public void testParkWhenFull() {
-    // Edge case: All slots occupied
-}
-
-@Test
-public void testExitWithInvalidTicket() {
-    // Error: Invalid ticket ID
-}
-
-@Test
-public void testDoubleExit() {
-    // Error: Exit same vehicle twice
-}
-```
-
-### Concurrency Tests (20%)
-
-```java
-@Test
-public void testConcurrentParkDifferentSlots() {
-    // 10 vehicles parking simultaneously in different slots
-    // Expected: All succeed
-}
-
-@Test
-public void testConcurrentParkSameSlot() {
-    // 10 vehicles trying same slot type
-    // Expected: Only available slots get filled, no double-parking
-}
-
-@Test
-public void testConcurrentParkAndExit() {
-    // Simultaneous park and exit operations
-    // Expected: No race conditions
-}
-```
-
-### Integration Tests (10%)
-
-```java
-@Test
-public void testCompleteWorkflow() {
-    // 1. Park vehicle
-    // 2. Wait some time
-    // 3. Exit vehicle
-    // 4. Verify fee calculation
-    // 5. Verify slot is free
-}
-```
+**Edge cases:**
+- Vehicle type doesn't match any slot type
+- All slots of a type are occupied
+- Concurrent exit of same ticket (only one should succeed)
 
 ---
 
-## 📊 STEP 7: SCALABILITY & TRADE-OFFS
+## 7) Extensibility (~5 min)
 
-### Design Trade-offs
+**"How would you add a new vehicle type (e.g., BUS)?"**
+> "Add BUS to VehicleType and SlotType enums, create a Bus class implementing Vehicle, add BUS slots to floors, and update the pricing rates. No changes to ParkingManager or Floor."
 
-#### **Decision: Slot-Level Locking**
-
-**Pros:**
-- High throughput (parallel parking in different slots)
-- Strong consistency (no double-parking)
-- Simple implementation (no distributed coordination)
-
-**Cons:**
-- Memory overhead (lock per slot)
-- Lock management complexity
-- Not suitable for distributed systems
-
-**Alternatives Considered:**
-- **Floor-level lock**: Too coarse, low throughput
-- **Optimistic locking**: Retry storms under high load
-- **No locking**: Race conditions, double-parking
-
-**When to Reconsider:**
-- If memory becomes constraint (millions of slots)
-- If distributed across multiple servers (use Redis locks)
-
-### Scalability Analysis
-
-#### **Current Limitations**
-- **Bottleneck**: Finding available slot (O(n) search)
-- **Breaking Point**: ~10,000 slots per server
-- **Memory**: O(slots) for locks
-
-#### **Scaling Strategies**
-
-1. **Indexing Available Slots**
-   ```java
-   // Maintain index of available slots by type
-   ConcurrentHashMap<SlotType, Queue<ParkingSlot>> availableSlots;
-   
-   // O(1) lookup instead of O(n) search
-   public ParkingSlot findSlot(VehicleType type) {
-       return availableSlots.get(SlotType.valueOf(type.name())).poll();
-   }
-   ```
-
-2. **Horizontal Scaling**
-   - Partition floors across servers
-   - Each server handles subset of floors
-   - Load balancer routes requests
-
-3. **Caching**
-   - Cache available slot counts
-   - Invalidate on park/exit
-   - Reduce repeated searches
-
-4. **Async Processing**
-   - Queue fee calculations
-   - Background cleanup of expired tickets
-   - Async notifications
-
-### Performance Characteristics
-
-| Operation | Time Complexity | Space Complexity |
-|-----------|----------------|------------------|
-| **Park Vehicle** | O(F × S) | O(1) |
-| **Exit Vehicle** | O(1) | O(1) |
-| **Find Available** | O(F × S) | O(1) |
-| **Get Slot Count** | O(F × S) | O(1) |
-
-*F = floors, S = slots per floor*
-
-**With Indexing:**
-| Operation | Time Complexity |
-|-----------|----------------|
-| **Park Vehicle** | O(1) |
-| **Exit Vehicle** | O(1) |
-
----
-
-## 🚀 STEP 8: EXTENSIBILITY & FUTURE ENHANCEMENTS
-
-### Extension Points
-
-#### **Adding New Vehicle Types**
-1. Add enum value to `VehicleType`
-2. Add corresponding `SlotType`
-3. Create vehicle class implementing `Vehicle`
-4. Update pricing strategy
-
-```java
-enum VehicleType { BIKE, CAR, TRUCK, BUS, MOTORCYCLE }
-
-class Bus implements Vehicle {
-    // Implementation
-}
-```
-
-#### **Adding New Pricing Strategies**
-1. Implement `PricingStrategy` interface
-2. Inject into `ParkingManager`
+**"How would you add dynamic pricing (peak hours)?"**
+> "PricingStrategy is already an interface. I'd implement a new DynamicPricing that checks the hour and applies a multiplier. Inject it into ParkingManager — no changes to existing code."
 
 ```java
 class DynamicPricing implements PricingStrategy {
     @Override
     public double calculateFee(Ticket ticket) {
-        // Peak hours: 2x rate
-        // Off-peak: 0.5x rate
+        double multiplier = isPeakHour(ticket.getEntryTime()) ? 2.0 : 1.0;
+        return baseRate * ticket.getDurationHours() * multiplier;
     }
 }
 ```
 
-#### **Adding Reservation System**
-1. Create `Reservation` entity
-2. Add `reservedBy` field to `ParkingSlot`
-3. Check reservation before parking
+**"How would you optimize the O(F×S) slot search?"**
+> "Maintain a per-type queue of available slots. parkVehicle polls from the queue (O(1)), exitVehicle adds back to the queue. The slot-level lock still protects the actual park/free operation."
 
-### Future Roadmap
+**"How would you add a reservation system?"**
+> "Add a reservedBy field to ParkingSlot and a Reservation entity. parkVehicle checks if the slot is reserved for the incoming vehicle before parking. The lock structure doesn't change."
 
-#### **Phase 1: Immediate (< 1 month)**
-- Add slot indexing for O(1) lookup
-- Implement dynamic pricing
-- Add parking history
-
-#### **Phase 2: Short-term (1-3 months)**
-- Distributed locking (Redis)
-- Database persistence
-- Payment gateway integration
-- Mobile app API
-
-#### **Phase 3: Long-term (3-6 months)**
-- Reservation system
-- Valet parking
-- Electric vehicle charging
-- Analytics dashboard
-- Predictive availability
+**"How would you scale to millions of slots?"**
+> "The design already scales horizontally — slots are independent, locks are per-slot. For distributed systems, replace in-memory locks with Redis distributed locks and TicketRepository with a database. The class structure stays the same."
 
 ---
 
-## 🎯 STEP 9: INTERVIEW EVALUATION CHECKLIST
+### Complexity
 
-### ✅ Requirements (20%)
-- [x] Identified functional requirements
-- [x] Identified non-functional requirements (concurrency!)
-- [x] Made clear assumptions
-- [x] Defined scope
+| Operation | Time | Space |
+|---|---|---|
+| **parkVehicle** | O(F × S) worst case | O(1) |
+| **exitVehicle** | O(1) | O(1) |
+| **getAvailableSlots** | O(F × S) | O(1) |
 
-### ✅ Design (30%)
-- [x] Clean layered architecture
-- [x] Appropriate design patterns (Strategy, Factory, Builder, Singleton)
-- [x] SOLID principles followed
-- [x] Extensible design
-
-### ✅ Concurrency (20%)
-- [x] Identified shared resources (ParkingSlot)
-- [x] Chosen slot-level locking strategy
-- [x] Prevented race conditions (atomic operations)
-- [x] No deadlocks (single lock per operation)
-- [x] Documented thread-safety for all classes
-
-### ✅ Code Quality (20%)
-- [x] Clean, minimal code
-- [x] Proper naming conventions
-- [x] Error handling
-- [x] Input validation
-- [x] Comments for complex logic
-
-### ✅ Communication (10%)
-- [x] Explained thought process
-- [x] Discussed trade-offs (slot-level vs floor-level locking)
-- [x] Considered scalability
-- [x] Showed production awareness
+*F = floors, S = slots per floor. With slot indexing: parkVehicle becomes O(1).*
 
 ---
 
-## 📝 STEP 10: HOW TO RUN
-
-```bash
-# Navigate to directory
-cd src/main/java
-
-# Compile
-javac com/rajan/lld/InterviewQuestionsPractice/ParkingLotSystem/ParkingLotSystemComplete.java
-
-# Run demo
-java com.rajan.lld.InterviewQuestionsPractice.ParkingLotSystem.ParkingLotSystemComplete
-```
-
-### Expected Output
-
-```
-======================================================================
-PARKING LOT SYSTEM - CONCURRENCY DEMO
-======================================================================
-
-✅ Setup: 2 floors, 10 slots per floor (20 total)
-
-TEST 1: Single Vehicle Parking
-✅ Parked: Bike(B001) at Slot F1-BIKE-1
-✅ Fee: $5.0 for 1 hour
-
-TEST 2: Concurrent Parking - Different Types (All should succeed)
-✅ Success: 10/10 vehicles parked
-
-TEST 3: Concurrent Parking - Same Type (Limited slots)
-✅ Success: 5/10 (5 bike slots available)
-
-TEST 4: Concurrent Park and Exit
-✅ No race conditions! All operations completed safely
-
-======================================================================
-ALL TESTS PASSED! ✅
-======================================================================
-```
-
----
-
-## 🎓 Key Takeaways
-
-1. **Slot-level locking** provides high throughput while maintaining consistency
-2. **Atomic operations** (find-and-park, exit-and-free) prevent race conditions
-3. **Strategy pattern** makes pricing extensible
-4. **Builder pattern** simplifies complex object construction
-5. **Indexing** can optimize from O(n) to O(1) lookup
-6. **Trade-offs** exist between simplicity, performance, and scalability
-
-This design demonstrates **production-ready concurrency handling** suitable for real-world parking systems! 🅿️
+**Implementation**: See [ParkingLotSystemComplete.java](./ParkingLotSystemComplete.java)
